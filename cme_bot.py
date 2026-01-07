@@ -23,7 +23,7 @@ DATABASE_ID = "2e047eb5fd3c80d89d56e2c1ad066138"
 
 # ⚠️ 【这里已经修改为你指定的名字】 ⚠️
 # 请确保你在 GitHub 上真的创建了一个叫 "cme-data-archive" 的仓库
-GITHUB_REPO = "ChaosJin/cme-data-archive"  
+GITHUB_REPO = "Curarpikt0000/cme-data-archive"
 
 # ==========================================
 # 以下逻辑不需要动
