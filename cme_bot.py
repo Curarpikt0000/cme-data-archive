@@ -18,12 +18,12 @@ warnings.filterwarnings('ignore')
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
 GITHUB_TOKEN = os.environ.get("GH_PERSONAL_TOKEN")
 
-# 这里填你的 Database ID (这个不敏感，可以直接写)
+# 这里填你的 Database ID
 DATABASE_ID = "2e047eb5fd3c80d89d56e2c1ad066138" 
 
-# 这里的格式必须是: "你的用户名/仓库名"
-# 请务必修改这里！！！
-GITHUB_REPO = "ChaosJin/cme-tracker"
+# ⚠️ 【这里已经修改为你指定的名字】 ⚠️
+# 请确保你在 GitHub 上真的创建了一个叫 "cme-data-archive" 的仓库
+GITHUB_REPO = "ChaosJin/cme-data-archive"  
 
 # ==========================================
 # 以下逻辑不需要动
@@ -75,6 +75,7 @@ def download_and_store(filename):
         headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get(url, headers=headers, timeout=30)
         if r.status_code == 200:
+            # 这里的 wb 模式对于二进制上传至关重要
             with open(filename, 'wb') as f: f.write(r.content)
             return upload_to_github_and_get_link(filename, r.content)
     except: pass
@@ -91,6 +92,7 @@ def fetch_daily_files_flow():
             url = download_and_store(fname)
             file_urls[fname] = url
             downloaded.add(fname)
+            downloaded.add(fname) # 防止重复下载
     return file_urls
 
 def parse_stock_data_robust(metal_name, config):
@@ -98,14 +100,17 @@ def parse_stock_data_robust(metal_name, config):
     stats = {'Registered': 0.0, 'Eligible': 0.0, 'Total': 0.0, 'NetChange': 0.0, 'Ratio': 0.0, 'Firm_Moves': []}
     if not os.path.exists(filename): return stats
     try:
+        # 使用 latin-1 忽略 0xd0 错误
         with open(filename, 'rb') as f:
             content = f.read().decode('latin-1', errors='ignore').upper()
             raw_text = re.sub(r'<[^>]+>', ' ', content)
         
         reg_match = re.search(r'TOTAL\s+REGISTERED.*?(\d{1,3}(?:,\d{3})*|\d+)', raw_text, re.DOTALL)
         if reg_match: stats['Registered'] = float(reg_match.group(1).replace(',', ''))
+        
         elig_match = re.search(r'TOTAL\s+ELIGIBLE.*?(\d{1,3}(?:,\d{3})*|\d+)', raw_text, re.DOTALL)
         if elig_match: stats['Eligible'] = float(elig_match.group(1).replace(',', ''))
+        
         stats['Total'] = stats['Registered'] + stats['Eligible']
         if stats['Total'] > 0: stats['Ratio'] = round(stats['Registered'] / stats['Total'], 4)
         
@@ -113,6 +118,7 @@ def parse_stock_data_robust(metal_name, config):
         for m in change_matches:
             try:
                 val = float(m.replace(',', ''))
+                # 过滤异常大的数值
                 if abs(val) < stats['Total']: 
                     stats['NetChange'] = val; break
             except: continue
@@ -168,6 +174,7 @@ def push_to_notion(metal, stats, delivery_txt, jpm_net, oi_val, stock_url, deliv
     if jpm_net > 0: note += " | JPM Stopped (接货)"
     if jpm_net < 0: note += " | JPM Issued (交货)"
 
+    # 这里会使用 GitHub 返回的 Raw URL
     stock_file = [{"name": f"{metal}.xls", "type": "external", "external": {"url": stock_url}}] if stock_url else []
     del_file = [{"name": "Delivery.pdf", "type": "external", "external": {"url": delivery_url}}] if delivery_url else []
 
@@ -194,6 +201,7 @@ def push_to_notion(metal, stats, delivery_txt, jpm_net, oi_val, stock_url, deliv
 
 if __name__ == "__main__":
     print(f"🚀 Running for {DISPLAY_DATE}")
+    print(f"📂 Target Repo: {GITHUB_REPO}") # 打印一下确认
     file_urls = fetch_daily_files_flow()
     delivery_url = file_urls.get(DELIVERY_PDF_NAME, "")
     for metal, config in METALS_CONFIG.items():
