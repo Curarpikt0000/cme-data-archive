@@ -23,7 +23,7 @@ DATABASE_ID = "2e047eb5fd3c80d89d56e2c1ad066138"
 
 # 这里的格式必须是: "你的用户名/仓库名"
 # 请务必修改这里！！！
-GITHUB_REPO = "YourUserName/cme-data-archive"  
+GITHUB_REPO = "ChaosJin/cme-tracker"
 
 # ==========================================
 # 以下逻辑不需要动
