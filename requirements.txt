@@ -1,0 +1,7 @@
+requests
+pandas
+pdfplumber
+PyGithub
+xlrd
+lxml
+openpyxl
