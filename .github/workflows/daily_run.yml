@@ -2,9 +2,8 @@ name: Daily CME Tracker
 
 on:
   schedule:
-    # 每天 UTC 时间 10:30 (北京时间 18:30) 运行
-    # 这是最保险的时间，确保 CME 已经更新数据
-    - cron: '30 10 * * *'
+    # 日本时间 (JST) 11:00 对应 UTC 时间 02:00
+    - cron: '0 2 * * *'
   # 允许你手动点击按钮运行 (方便测试)
   workflow_dispatch:
 
