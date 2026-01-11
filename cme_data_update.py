@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 # 1. 基础配置 (从环境变量读取)
 # ==========================================
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-# 建议通过环境变量读取，若缺失则使用脚本默认 ID
 DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "2e047eb5fd3c80d89d56e2c1ad066138") 
 
 HEADERS = {
@@ -18,7 +17,7 @@ HEADERS = {
     "Notion-Version": "2022-06-28"
 }
 
-# 8 种金属的精确坐标配置 (基于 Excel 索引：行号-1, H列=7, F列=5)
+# 8 种金属的精准坐标配置
 CELL_CONFIG = {
     "Lead":      {"file": "Lead_Stocks.xls",      "reg": (92, 7),  "elig": (93, 7),  "change": (94, 5)},
     "Zinc":      {"file": "Zinc_Stocks.xls",      "reg": (82, 7),  "elig": (83, 7),  "change": (84, 5)},
@@ -43,54 +42,64 @@ def clean_val(val):
 def extract_clearing_anomalies(metal_name):
     """
    
-    解析 PDF 中该金属所属页面的做市商异动，自动识别交割量最高的前三名。
+    精准解析 PDF 中的做市商异动：区分 ISSUED (卖出) 与 STOPPED (接货)
     """
     pdf_path = "MetalsIssuesAndStopsReport.pdf"
     if not os.path.exists(pdf_path):
         return "PDF not found."
 
     extracted_data = []
+    current_section = "Unknown" # 用于跟踪当前是 ISSUED 还是 STOPPED 区域
+
     try:
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages:
                 text = page.extract_text()
-                # 仅在包含该金属名称的页面进行搜索
                 if not text or metal_name.upper() not in text.upper():
                     continue
                 
                 lines = text.split('\n')
                 for line in lines:
-                    # 排除汇总行 (TOTAL)，寻找包含数值且长度符合机构行特征的文本
+                    # 识别区域上下文
+                    if "ISSUED" in line.upper(): current_section = "Issued"
+                    if "STOPPED" in line.upper(): current_section = "Stopped"
+
+                    # 排除汇总行，提取机构数据行
                     if re.search(r'\d+', line) and "TOTAL" not in line.upper():
-                        # 清洗数值中的逗号，寻找所有整数
+                        # 清洗逗号并提取所有数值
                         nums = re.findall(r'\d+', line.replace(',', ''))
                         if len(nums) >= 1:
-                            # 提取行首的机构名称 (截断数值之前的部分)
+                            # 提取行首的机构名称
                             member_name = re.sub(r'\d.*', '', line).strip()
-                            vol = max(int(n) for n in nums)
-                            if vol > 0: # 仅记录有成交的做市商
-                                extracted_data.append((member_name, vol))
+                            vol = int(nums[0]) # 获取成交量
+                            if vol > 0 and len(member_name) > 3:
+                                extracted_data.append({
+                                    "name": member_name, 
+                                    "vol": vol, 
+                                    "type": current_section
+                                })
         
-        # 按成交量降序排列
-        extracted_data.sort(key=lambda x: x[1], reverse=True)
+        # 按成交量降序排列并格式化输出
+        extracted_data.sort(key=lambda x: x['vol'], reverse=True)
         top_3 = extracted_data[:3]
         
         if not top_3:
-            return "No significant clearing activity."
+            return "No significant clearing activity detected."
         
-        return " | ".join([f"{name}: {vol}" for name, vol in top_3])
+        return " | ".join([f"{d['name']}: {d['vol']} ({d['type']})" for d in top_3])
 
     except Exception as e:
         return f"PDF Error: {str(e)}"
 
 def update_precise_data():
-    """执行精准库存与异动数据更新流程"""
-    # 逻辑：获取 T-1 日期匹配报告日期
+    """主更新逻辑：Excel 库存 + PDF 异动"""
     date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     print(f"[*] 正在处理日期为 {date_str} 的金属数据...")
 
     for metal, cfg in CELL_CONFIG.items():
-        if not os.path.exists(cfg['file']): continue
+        if not os.path.exists(cfg['file']):
+            print(f"[!] 缺失文件: {cfg['file']}")
+            continue
         
         try:
             # 1. 提取 Excel 库存数据
@@ -104,7 +113,7 @@ def update_precise_data():
             # 2. 提取 PDF 异动详情
             anomalies = extract_clearing_anomalies(metal)
 
-            # 3. 在 Notion 数据库中查找对应行
+            # 3. 在 Notion 数据库中查询对应行
             query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
             q_res = requests.post(query_url, headers=HEADERS, 
                                  json={"filter": {"and": [
@@ -117,7 +126,6 @@ def update_precise_data():
                 update_url = f"https://api.notion.com/v1/pages/{pid}"
                 
                 # 4. 执行更新 (Patch)
-                # 修正：Name 列代替 Ad Name，移除不存在的 Volatility Index
                 requests.patch(update_url, headers=HEADERS, 
                               json={"properties": {
                                   "Total Registered": {"number": reg},
@@ -125,12 +133,12 @@ def update_precise_data():
                                   "Net Change": {"number": change},
                                   "JPM/Asahi etc Stock change": {"rich_text": [{"text": {"content": anomalies}}]}
                               }})
-                print(f"✅ {metal} 数据已成功同步至 Notion。")
+                print(f"✅ {metal} 数据已完美更新 (含 {anomalies})。")
             else:
-                print(f"[?] 未能在 Notion 中找到 {date_str} 的 {metal} 初始行。")
+                print(f"[?] Notion 中未找到 {date_str} 的 {metal} 记录。")
                 
         except Exception as e:
-            print(f"❌ {metal} 处理过程中发生错误: {e}")
+            print(f"❌ {metal} 处理出错: {e}")
 
 if __name__ == "__main__":
     if not NOTION_TOKEN:
