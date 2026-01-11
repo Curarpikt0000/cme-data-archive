@@ -27,7 +27,9 @@ jobs:
       - name: Step 3 - Precise Inventory Update
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }} # 必须加这一行
         run: python cme_data_update.py
+        
      - name: Step 4 - Gemini AI Market Analysis
         run: python cme_ai_analysis.py
         env:
