@@ -2,11 +2,11 @@ name: Combined CME Smart Workflow
 
 on:
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 2 * * *' # 日本时间 11:00 AM
   workflow_dispatch:
 
 jobs:
-  cme-all-in-one:
+  full-process:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -15,17 +15,16 @@ jobs:
         with:
           python-version: '3.9'
       - name: Install Dependencies
-        run: |
-          pip install requests pandas xlrd PyGithub lxml pdfplumber yfinance google-generativeai
-      - name: Step 1 - Download Files
+        run: pip install -r requirements.txt
+      - name: Step 1 - Download CME Files
         env:
           GH_PERSONAL_TOKEN: ${{ secrets.GH_PERSONAL_TOKEN }}
         run: python cme_bot.py
-      - name: Step 2 - Sync Links
+      - name: Step 2 - Sync Links to Notion
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python notion_sync.py
-      - name: Step 3 - Precise Data Update
+      - name: Step 3 - Precise Inventory Update
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python cme_data_update.py
