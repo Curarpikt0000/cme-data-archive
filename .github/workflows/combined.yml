@@ -31,5 +31,5 @@ jobs:
       - name: Step 4 - Gemini AI Market Analysis
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }} # 确保这里使用新名字
         run: python cme_ai_analysis.py
