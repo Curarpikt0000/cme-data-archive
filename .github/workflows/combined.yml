@@ -3,7 +3,7 @@ name: Combined CME Smart Workflow
 on:
   schedule:
     - cron: '0 2 * * *' # 日本时间 11:00 AM
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch: 
 
 jobs:
   full-process:
@@ -22,16 +22,20 @@ jobs:
           GH_PERSONAL_TOKEN: ${{ secrets.GH_PERSONAL_TOKEN }}
         run: python cme_bot.py
 
+      # [新增：健壮性检查] 确保 PDF 和 Excel 确实下载成功了
+      - name: Verify Downloaded Files
+        run: ls -lh *.xls *.pdf
+
       - name: Step 2 - Sync Links to Notion
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python notion_sync.py
 
-      - name: Step 3 - Precise Inventory Update
+      - name: Step 3 - Precise Inventory Update (with Market Maker Anomalies)
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }} # <-- 必须补全这一行
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python cme_data_update.py
 
       - name: Step 4 - Gemini AI Market Analysis
