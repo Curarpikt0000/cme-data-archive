@@ -1,4 +1,4 @@
-name: Combined CME Workflow
+name: Combined CME Smart Workflow
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  cme-process:
+  cme-all-in-one:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -16,20 +16,21 @@ jobs:
           python-version: '3.9'
       - name: Install Dependencies
         run: |
-          pip install requests pandas xlrd PyGithub lxml pdfplumber
-      - name: Step 1 - Download and Upload Files
+          pip install requests pandas xlrd PyGithub lxml pdfplumber yfinance google-generativeai
+      - name: Step 1 - Download Files
         env:
           GH_PERSONAL_TOKEN: ${{ secrets.GH_PERSONAL_TOKEN }}
         run: python cme_bot.py
-      - name: Step 2 - Sync File Links to Notion
+      - name: Step 2 - Sync Links
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python notion_sync.py
-      - name: Step 3 - Precise Data Update from Excel
+      - name: Step 3 - Precise Data Update
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         run: python cme_data_update.py
-      - name: Step 4 - Market Makers & OI Analysis
+      - name: Step 4 - Gemini AI Market Analysis
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        run: python cme_market_analysis.py
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python cme_ai_analysis.py
