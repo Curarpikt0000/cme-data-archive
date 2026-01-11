@@ -5,10 +5,9 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
-def get_ai_analysis():
+def run_step_4():
     if not GOOGLE_API_KEY: return
     
-    # 修复：明确配置并使用标准模型名称
     genai.configure(api_key=GOOGLE_API_KEY)
     model = genai.GenerativeModel('gemini-1.5-flash')
     
@@ -18,34 +17,36 @@ def get_ai_analysis():
 
     for metal, sym in tickers.items():
         try:
+            # 强化价格抓取 (处理 MultiIndex)
             hist = yf.download(sym, period="5d", progress=False)
             if hist.empty: continue
             closes = hist['Close'].values.flatten()
             curr, prev = float(closes[-1]), float(closes[-2])
             p_info = f"Price {curr:.2f} ({(curr-prev)/prev*100:+.2f}%)"
 
+            # 查询 Notion
             q = requests.post(f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", headers=headers,
-                json={"filter": {"and": [{"property": "Date", "date": {"equals": date_str}},
-                                       {"property": "Metal Type", "select": {"equals": metal}}]}}).json()
-            
+                             json={"filter": {"and": [{"property": "Date", "date": {"equals": date_str}},
+                                                    {"property": "Metal Type", "select": {"equals": metal}}]}}).json()
             if not q.get("results"): continue
+            
             page = q["results"][0]
-            # 获取刚刚 Step 3 写入的 AI 提取数据
+            # 读取 Step 3 的详细数量
             dealers_rt = page["properties"].get("JPM/Asahi etc Stock change", {}).get("rich_text", [])
             dealers = dealers_rt[0].get("plain_text", "None") if dealers_rt else "None"
 
-            # 研判逻辑
-            prompt = f"分析 {metal} {date_str}: 价格 {p_info}, 做市商变动明细: {dealers}。请提供2句深度市场情绪研判。"
+            # 深度研判
+            prompt = f"分析 {metal} ({date_str}): 价格{p_info}, 交割异动明细:{dealers}. 请给2句硬核市场研判，说明是否存在挤仓风险。"
             response = model.generate_content(prompt)
             
             requests.patch(f"https://api.notion.com/v1/pages/{page['id']}", headers=headers,
-                json={"properties": {
-                    "Name": {"title": [{"text": {"content": f"AI Insight: {metal} {date_str}"}}]},
-                    "Activity Note": {"rich_text": [{"text": {"content": response.text}}]}
-                }})
-            print(f"✅ {metal} AI 深度研判同步成功")
+                           json={"properties": {
+                               "Name": {"title": [{"text": {"content": f"AI Insight: {metal} {date_str}"}}]},
+                               "Activity Note": {"rich_text": [{"text": {"content": response.text}}]}
+                           }})
+            print(f"✅ {metal} AI 分析同步成功")
         except Exception as e:
-            print(f"❌ {metal} 分析出错: {e}")
+            print(f"❌ {metal} 处理出错: {e}")
 
 if __name__ == "__main__":
-    get_ai_analysis()
+    run_step_4()
