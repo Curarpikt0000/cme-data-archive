@@ -1,100 +1,66 @@
 import os
 import requests
-import pdfplumber
 import yfinance as yf
+import pdfplumber
 import google.generativeai as genai
 from datetime import datetime, timedelta
 
-# ==========================================
-# 1. 配置加载 (从 GitHub Secrets)
-# ==========================================
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "2e047eb5fd3c80d89d56e2c1ad066138")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+HEADERS = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"}
 
-genai.configure(api_key=GOOGLE_API_KEY)
-HEADERS = {
-    "Authorization": f"Bearer {NOTION_TOKEN}",
-    "Content-Type": "application/json",
-    "Notion-Version": "2022-06-28"
-}
-
-def extract_pdf_text():
-    """提取交割通知 PDF 的文本内容"""
-    pdf_path = "MetalsIssuesAndStopsReport.pdf"
-    if not os.path.exists(pdf_path):
-        return "Warning: Delivery Notice PDF not found."
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            # 提取前几页核心交割数据
-            content = "\n".join([page.extract_text() for page in pdf.pages[:3] if page.extract_text()])
-            return content[:5000] # 限制长度防止 Token 溢出
-    except Exception as e:
-        return f"PDF Error: {str(e)}"
-
-def get_market_analysis():
-    # 当前日期设为 2026-01-11 逻辑
+def get_ai_analysis():
     date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     model = genai.GenerativeModel('gemini-1.5-flash')
-    tickers = {"Gold": "GC=F", "Silver": "SI=F", "Platinum": "PL=F"}
+    tickers = {"Gold": "GC=F", "Silver": "SI=F", "Platinum": "PL=F", "Copper": "HG=F"}
 
-    print(f"[*] 启动 AI 深度分析流水线: {datetime.now()}")
-    pdf_context = extract_pdf_text()
+    # 提取 PDF 交割细节供 AI 参考
+    pdf_text = ""
+    if os.path.exists("MetalsIssuesAndStopsReport.pdf"):
+        with pdfplumber.open("MetalsIssuesAndStopsReport.pdf") as pdf:
+            pdf_text = "\n".join([p.extract_text() for p in pdf.pages[:3] if p.extract_text()])
 
-    for metal, ticker in tickers.items():
-        # 1. 抓取价格并修复 IndexError
+    for metal, sym in tickers.items():
         try:
-            data = yf.download(ticker, period="5d")
-            if len(data) < 2:
-                p_report = "Price data insufficient."
+            # 修复 IndexError: 增加长度检查
+            hist = yf.download(sym, period="5d")
+            if len(hist) < 2: 
+                p_info = "Price data unavailable."
             else:
-                change = ((data['Close'].iloc[-1] - data['Close'].iloc[-2]) / data['Close'].iloc[-2]) * 100
-                p_report = f"Price: {data['Close'].iloc[-1]:.2f}, Change: {change:+.2f}%"
-        except:
-            p_report = "Price fetch failed."
+                change = (hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2] * 100
+                p_info = f"Price {hist['Close'].iloc[-1]:.2f} ({change:+.2f}%)"
 
-        # 2. 构造深度分析提示词 (结合 PDF + AI 知识)
-        prompt = f"""
-        作为大宗商品分析师，请根据以下信息分析 {metal} 的市场风险与新闻：
-        1. 价格动态：{p_report}
-        2. 交割报告 (PDF 摘要)：{pdf_context}
-        3. 当前时间背景：2026 年 1 月。
-        
-        请结合 PDF 中的做市商 Issues/Stops 异动，识别是否存在潜在的挤仓(Squeeze)风险、
-        主要的空头交割压力或利好新闻。
-        
-        要求：
-        - 逻辑严密，指出具体的风险点。
-        - 简明扼要，给出两句核心结论。
-        """
+            # 从 Notion 获取刚刚 Step 3 填入的库存和商家信息
+            q_res = requests.post(f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", headers=HEADERS, 
+                                 json={"filter": {"and": [{"property": "Date", "date": {"equals": date_str}},
+                                                         {"property": "Metal Type", "select": {"equals": metal}}]}}).json()
+            if not q_res.get("results"): continue
+            props = q_res["results"][0]["properties"]
+            pid = q_res["results"][0]["id"]
+            
+            net_chg = props["Net Change"]["number"]
+            dealers = props["JPM/Asahi etc Stock change"]["rich_text"][0]["text"]["content"] if props["JPM/Asahi etc Stock change"]["rich_text"] else "None"
 
-        try:
+            prompt = f"""
+            作为金属分析师，分析 {metal} {date_str}：
+            价格动态: {p_info}
+            库存净变动: {net_chg}
+            做市商异动: {dealers}
+            交割报告原文摘要: {pdf_text[:1000]}
+            
+            结合库存流向和商家接货/出货，给出 2 句深度研判。直接说明是否有挤仓风险或机构看涨情绪。
+            """
+            
             response = model.generate_content(prompt)
-            ai_insight = response.text.strip()
-
-            # 3. 同步至 Notion (修正属性名)
-            query_res = requests.post(
-                f"https://api.notion.com/v1/databases/{DATABASE_ID}/query",
-                headers=HEADERS,
-                json={"filter": {"and": [
-                    {"property": "Date", "date": {"equals": date_str}},
-                    {"property": "Metal Type", "select": {"equals": metal}}
-                ]}}
-            ).json()
-
-            if query_res.get("results"):
-                pid = query_res["results"][0]["id"]
-                requests.patch(
-                    f"https://api.notion.com/v1/pages/{pid}",
-                    headers=HEADERS,
-                    json={"properties": {
-                        "Name": {"title": [{"text": {"content": f"AI Insight: {metal} {date_str}"}}]},
-                        "Activity Note": {"rich_text": [{"text": {"content": ai_insight}}]}
-                    }}
-                )
-                print(f"✅ {metal} AI 分析已同步。")
-        except Exception as e:
-            print(f"❌ {metal} AI 处理失败: {e}")
+            # 修正列名为 Name
+            requests.patch(f"https://api.notion.com/v1/pages/{pid}", headers=HEADERS, 
+                          json={"properties": {
+                              "Name": {"title": [{"text": {"content": f"AI Insight: {metal} {date_str}"}}]},
+                              "Activity Note": {"rich_text": [{"text": {"content": response.text}}]}
+                          }})
+            print(f"✅ {metal} AI 分析同步成功")
+        except Exception as e: print(f"❌ {metal} AI 错误: {e}")
 
 if __name__ == "__main__":
-    get_market_analysis()
+    get_ai_analysis()
