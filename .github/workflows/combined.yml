@@ -45,8 +45,11 @@ jobs:
         run: python cme_data_update.py
 
       - name: Step 4 - Gemini AI Market Analysis
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        run: python cme_ai_analysis.py
+       env:
+         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}  # 确保这行存在
+         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+       run: |
+         pip uninstall -y google-genai google-generativeai # 彻底清理冲突
+         pip install google-generativeai # 只装稳健版
+         python cme_ai_analysis.py
