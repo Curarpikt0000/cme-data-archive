@@ -5,3 +5,26 @@ PyGithub
 xlrd
 lxml
 openpyxl
+
+import yfinance as yf
+
+# 对应雅虎财经的商品代码
+TICKER_MAP = {
+    "Gold": "GC=F", "Silver": "SI=F", "Copper": "HG=F",
+    "Platinum": "PL=F", "Palladium": "PA=F", 
+    "Aluminum": "ALI=F", "Zinc": "ZNC=F", "Lead": "LED=F"
+}
+
+def get_price_trend(metal_name):
+    """获取当日价格涨跌幅"""
+    ticker = TICKER_MAP.get(metal_name)
+    if not ticker: return "未知"
+    try:
+        data = yf.Ticker(ticker).history(period="2d")
+        if len(data) < 2: return "数据不足"
+        # 计算变动
+        close_today = data['Close'].iloc[-1]
+        close_prev = data['Close'].iloc[-2]
+        change_pct = ((close_today - close_prev) / close_prev) * 100
+        return f"价格:{close_today:.2f}, 涨跌:{change_pct:+.2f}%"
+    except: return "价格获取失败"
