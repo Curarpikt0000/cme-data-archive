@@ -2,35 +2,36 @@ name: Combined CME Smart Workflow
 
 on:
   schedule:
-    - cron: '0 2 * * *' # 日本时间 11:00 AM
-  workflow_dispatch: 
+    - cron: '0 2 * * *' # 日本时间 11:00 AM (UTC 2:00 AM)
+  workflow_dispatch: # 支持手动触发测试
 
 jobs:
   full-process:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: '3.11' # 升级到 3.11 以避免 Google 库的过期警告
+          cache: 'pip'          # 开启缓存加快运行速度
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # 1. 强力卸载所有旧版和可能冲突的 Google 包
-          pip uninstall -y google-generativeai google-api-core google-cloud-core
-          # 2. 重新安装新版依赖
-          pip install --no-cache-dir -r requirements.txt
-          # 3. 调试：打印已安装列表，确认是否有 google-genai
-          pip list | grep google
+          # 初始清理：卸载所有可能冲突的 Google 包
+          pip uninstall -y google-generativeai google-genai google-api-core
+          pip install -r requirements.txt
 
       - name: Step 1 - Download CME Files
         env:
           GH_PERSONAL_TOKEN: ${{ secrets.GH_PERSONAL_TOKEN }}
         run: python cme_bot.py
+
+      - name: Verify PDF Existence
+        run: ls -lh MetalsIssuesAndStopsReport.pdf || echo "⚠️ PDF Not Found!"
 
       - name: Step 2 - Sync Links to Notion
         env:
@@ -38,18 +39,19 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python notion_sync.py
 
-      - name: Step 3 - Precise Inventory Update
+      - name: Step 3 - Precise Inventory Update (with Quantities)
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python cme_data_update.py
 
       - name: Step 4 - Gemini AI Market Analysis
-       env:
-         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}  # 确保这行存在
-         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-       run: |
-         pip uninstall -y google-genai google-generativeai # 彻底清理冲突
-         pip install google-generativeai # 只装稳健版
-         python cme_ai_analysis.py
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          # 最终修复导入报错的关键步骤：强力重装稳健版 SDK
+          pip uninstall -y google-genai google-generativeai
+          pip install google-generativeai
+          python cme_ai_analysis.py
