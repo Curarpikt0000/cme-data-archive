@@ -37,3 +37,7 @@ jobs:
         run: |
           pip install requests
           python notion_sync.py
+- name: Update Detailed Data
+      env:
+        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      run: python cme_data_update.py
