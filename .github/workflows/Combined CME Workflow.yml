@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-tracker:
+  cme-process:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -14,30 +14,18 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-      - name: Run CME Bot
+      - name: Install Dependencies
+        run: |
+          pip install requests pandas xlrd PyGithub lxml pdfplumber
+      - name: Step 1 - Download and Upload Files
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           GH_PERSONAL_TOKEN: ${{ secrets.GH_PERSONAL_TOKEN }}
-        run: |
-          pip install -r requirements.txt
-          python cme_bot.py
-
-  sync-to-notion:
-    needs: run-tracker # 关键：只有上面的跑成功了，这里才会开始
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-      - name: Run Sync
+        run: python cme_bot.py
+      - name: Step 2 - Sync File Links to Notion
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        run: |
-          pip install requests
-          python notion_sync.py
-- name: Update Detailed Data
-      env:
-        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-      run: python cme_data_update.py
+        run: python notion_sync.py
+      - name: Step 3 - Precise Data Update from Excel
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python cme_data_update.py
