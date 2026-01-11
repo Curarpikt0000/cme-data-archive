@@ -12,6 +12,7 @@ HEADERS = {
     "Notion-Version": "2022-06-28"
 }
 
+# ... 前面代码保持不变 ...
 METALS = {
     "Gold": "Gold_Stocks.xls",
     "Silver": "Silver_stocks.xls",
@@ -19,8 +20,10 @@ METALS = {
     "Aluminum": "Aluminum_Stocks.xls",
     "Lead": "Lead_Stocks.xls",
     "Zinc": "Zinc_Stocks.xls",
-    "PA-PL": "PA-PL_Stck_Rprt.xls"
+    "Platinum": "PA-PL_Stck_Rprt.xls",   # 拆分 PT
+    "Palladium": "PA-PL_Stck_Rprt.xls"   # 拆分 PD
 }
+# ... 后面同步逻辑保持不变 ...
 
 def get_file_property_item(name, url):
     return {"files": [{"name": name, "external": {"url": url}}]}
