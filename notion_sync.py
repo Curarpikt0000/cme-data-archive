@@ -28,7 +28,8 @@ def get_file_property_item(name, url):
 def sync_to_notion():
     # 确保日期格式和 Notion 一致
     from datetime import timedelta
-    date_str = (datetime.datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    # 修正：直接使用 datetime.now()
+    date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     delivery_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/data/{date_str}/MetalsIssuesAndStopsReport.pdf"
 
     for metal_type, file_name in METALS.items():
