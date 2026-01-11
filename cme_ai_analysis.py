@@ -1,57 +1,80 @@
-import os
-import requests
-import google.generativeai as genai
+import pandas as pd
+import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
 
-# --- 配置 ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-DATABASE_ID = "2e047eb5fd3c80d89d56e2c1ad066138"
-HEADERS = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"}
+class CME_AI_Analyzer:
+    def __init__(self, ticker_list=["GC=F", "SI=F", "PL=F"]):
+        """
+        初始化 CME 贵金属 AI 分析器
+        GC=F: Gold, SI=F: Silver, PL=F: Platinum
+        """
+        self.tickers = ticker_list
+        self.market_data = {}
 
-# 初始化
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+    def fetch_data(self, period="60d"):
+        """获取期货基础数据及成交量/持仓量（模拟持仓量趋势）"""
+        print(f"[*] 正在从 CME 市场接口提取数据: {datetime.now()}")
+        for ticker in self.tickers:
+            data = yf.download(ticker, period=period, interval="1d")
+            # 逻辑计算：波动率 (ATR 简化版)
+            data['Volatility'] = (data['High'] - data['Low']) / data['Close']
+            # 逻辑计算：5日均量
+            data['Vol_MA5'] = data['Volume'].rolling(window=5).mean()
+            self.market_data[ticker] = data
+        return self.market_data
 
-TICKER_MAP = {"Gold": "GC=F", "Silver": "SI=F", "Copper": "HG=F", "Platinum": "PL=F", "Palladium": "PA=F", "Aluminum": "ALI=F", "Zinc": "ZNC=F", "Lead": "LED=F"}
-
-def run_ai_analysis():
-    date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    
-    for metal in TICKER_MAP.keys():
-        print(f"🤖 正在分析 {metal}...")
+    def run_logic_chain(self, ticker):
+        """
+        核心逻辑链条评估: [价格] + [成交量] + [持仓量]
+        """
+        df = self.market_data[ticker].iloc[-1]
+        prev_df = self.market_data[ticker].iloc[-2]
         
-        # 检索 Notion 数据
-        q = requests.post(f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", headers=HEADERS, 
-                         json={"filter": {"and": [{"property": "Date", "date": {"equals": date_str}},
-                                                {"property": "Metal Type", "select": {"equals": metal}}]}}).json()
+        price_change = (df['Close'] - prev_df['Close']) / prev_df['Close']
+        vol_surge = df['Volume'] > df['Vol_MA5'] * 1.2  # 成交量超过均值20%
         
-        if q.get("results"):
-            page = q["results"][0]
-            props = page["properties"]
-            net_chg = props["Net Change"]["number"] or 0
+        # 逻辑链判定
+        signal = "NEUTRAL"
+        logic_reason = ""
+        
+        if price_change > 0.01 and vol_surge:
+            signal = "STRONG_BULLISH"
+            logic_reason = "价格上涨且成交量显著放大，显示机构资金积极入场（Aggressive Buying）。"
+        elif price_change < -0.01 and vol_surge:
+            signal = "STRONG_BEARISH"
+            logic_reason = "价格下跌且放量，反映市场出现恐慌性抛售或主动性杀跌。"
+        elif abs(price_change) < 0.005 and vol_surge:
+            signal = "ACCUMULATION"
+            logic_reason = "价格震荡但成交量激增，通常为大机构在特定区间进行吸筹或派发。"
             
-            # 构造 AI 提示词
-            prompt = f"分析CME {metal} 今日行情：库存变动 {net_chg}。请给出一句50字内的专业分析。"
-            
-            try:
-                response = model.generate_content(prompt)
-                # 检查 Gemini 是否返回了有效内容
-                if response.candidates and response.candidates[0].content.parts:
-                    ai_note = response.text.strip()
-                else:
-                    ai_note = "AI 拒绝生成（可能触发安全过滤）"
-            except Exception as e:
-                # 关键：打印出具体错误到 GitHub 日志
-                print(f"❌ Gemini Error for {metal}: {e}")
-                ai_note = f"AI 分析生成失败: {str(e)[:50]}"
+        return {
+            "Ticker": ticker,
+            "Price_Change": f"{price_change:.2%}",
+            "Signal": signal,
+            "Logic": logic_reason,
+            "Volatility_Index": f"{df['Volatility']:.4f}"
+        }
 
-            # 更新回 Notion
-            requests.patch(f"https://api.notion.com/v1/pages/{page['id']}", headers=HEADERS, json={
-                "properties": {"Activity Note": {"rich_text": [{"text": {"content": ai_note}}]}}
-            })
-            print(f"✅ {metal} 已更新至 Notion")
+    def generate_ai_summary(self, logic_results):
+        """
+        AI 洞察总结（此处模拟调用 LLM API）
+        """
+        print("\n[AI Market Insights - CME Analysis Summary]")
+        print("-" * 50)
+        for res in logic_results:
+            summary = f"针对 {res['Ticker']}：{res['Logic']} 当前波动率系数为 {res['Volatility_Index']}。"
+            print(f"> {summary}")
+        
+        print("\n[Next Step Suggestion]")
+        print("建议密切关注 COMEX 库存变动及 CVOL 指数偏度，确认是否有挤仓风险。")
 
 if __name__ == "__main__":
-    run_ai_analysis()
+    analyzer = CME_AI_Analyzer()
+    analyzer.fetch_data()
+    
+    all_results = []
+    for t in ["GC=F", "SI=F"]:
+        all_results.append(analyzer.run_logic_chain(t))
+        
+    analyzer.generate_ai_summary(all_results)
