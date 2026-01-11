@@ -20,8 +20,8 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # 彻底清除旧包，安装 2026 标准的新版 SDK
-          pip uninstall -y google-generativeai google-genai
+          # 彻底清除所有旧 Google 库冲突
+          pip uninstall -y google-generativeai google-genai google-api-core
           pip install -r requirements.txt
 
       - name: Step 1 - Download CME Files
