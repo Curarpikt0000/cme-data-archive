@@ -1,19 +1,15 @@
 import os
 import pandas as pd
 import requests
+import pdfplumber
+import re
 from datetime import datetime, timedelta
 
-# --- 配置 ---
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = "2e047eb5fd3c80d89d56e2c1ad066138"
-HEADERS = {
-    "Authorization": f"Bearer {NOTION_TOKEN}",
-    "Content-Type": "application/json",
-    "Notion-Version": "2022-06-28"
-}
+HEADERS = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"}
 
-# 单元格坐标映射 (Excel 1-based -> Python 0-based)
-# H列是索引7, F列是索引5
+# 精确坐标配置 (Excel 行号-1, 列号H=7, F=5)
 CELL_CONFIG = {
     "Lead":      {"file": "Lead_Stocks.xls",      "reg": (92, 7), "elig": (93, 7), "change": (92, 5)},
     "Zinc":      {"file": "Zinc_Stocks.xls",      "reg": (82, 7), "elig": (83, 7), "change": (82, 5)},
@@ -25,69 +21,40 @@ CELL_CONFIG = {
 }
 
 def clean_val(val):
-    """清理非数字字符并转为浮点数"""
     try:
-        if pd.isna(val): return 0.0
-        return float(str(val).replace(',', '').strip())
-    except:
-        return 0.0
+        return float(str(val).replace(',', '').strip()) if not pd.isna(val) else 0.0
+    except: return 0.0
 
-def update_notion_data():
-    # 使用昨天日期（与你下载文件的日期对齐）
+def update_precise_data():
     date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
     for metal, cfg in CELL_CONFIG.items():
-        file_path = f"data/{date_str}/{cfg['file']}"
-        
-        if not os.path.exists(file_path):
-            print(f"⚠️ 文件不存在: {file_path}")
-            continue
-
+        if not os.path.exists(cfg['file']): continue
         try:
-            # CME 的 xls 有时其实是 HTML，pandas 的 read_html 比 read_excel 更鲁棒
-            try:
-                df_list = pd.read_html(file_path)
-                df = df_list[0]
-            except:
-                df = pd.read_excel(file_path, header=None)
+            # 兼容 HTML 格式的 XLS
+            try: df = pd.read_html(cfg['file'])[0]
+            except: df = pd.read_excel(cfg['file'], header=None)
 
-            # 提取数据
-            reg_val = clean_val(df.iloc[cfg['reg'][0], cfg['reg'][1]])
-            elig_val = clean_val(df.iloc[cfg['elig'][0], cfg['elig'][1]])
-            change_val = clean_val(df.iloc[cfg['change'][0], cfg['change'][1]])
-            
-            total = reg_val + elig_val
-            ratio = round(reg_val / total, 4) if total > 0 else 0
+            reg = clean_val(df.iloc[cfg['reg'][0], cfg['reg'][1]])
+            elig = clean_val(df.iloc[cfg['elig'][0], cfg['elig'][1]])
+            change = clean_val(df.iloc[cfg['change'][0], cfg['change'][1]])
+            total = reg + elig
+            ratio = round(reg / total, 4) if total > 0 else 0
 
-            # 1. 查找 Notion 中的对应行
-            query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-            query_data = {
-                "filter": {
-                    "and": [
-                        {"property": "Date", "date": {"equals": date_str}},
-                        {"property": "Metal Type", "select": {"equals": metal}}
-                    ]
-                }
-            }
-            res = requests.post(query_url, headers=HEADERS, json=query_data).json()
-
-            if res.get("results"):
-                page_id = res["results"][0]["id"]
-                # 2. 更新数值列
-                patch_data = {
-                    "properties": {
-                        "Total Registered": {"number": reg_val},
-                        "Total Eligible": {"number": elig_val},
-                        "Combined Total": {"number": total},
-                        "Net Change": {"number": change_val},
-                        "Reg/Total Ratio": {"number": ratio}
-                    }
-                }
-                requests.patch(f"https://api.notion.com/v1/pages/{page_id}", headers=HEADERS, json=patch_data)
-                print(f"✅ {metal} 数据已精确更新")
-
-        except Exception as e:
-            print(f"❌ 处理 {metal} 出错: {e}")
+            # 查找并更新 Notion
+            q_res = requests.post(f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", headers=HEADERS, 
+                                 json={"filter": {"and": [{"property": "Date", "date": {"equals": date_str}},
+                                                        {"property": "Metal Type", "select": {"equals": metal}}]}}).json()
+            if q_res.get("results"):
+                pid = q_res["results"][0]["id"]
+                requests.patch(f"https://api.notion.com/v1/pages/{pid}", headers=HEADERS, 
+                              json={"properties": {
+                                  "Total Registered": {"number": reg}, "Total Eligible": {"number": elig},
+                                  "Combined Total": {"number": total}, "Net Change": {"number": change},
+                                  "Reg/Total Ratio": {"number": ratio}
+                              }})
+                print(f"✅ {metal} Data Patched.")
+        except Exception as e: print(f"❌ {metal} Error: {e}")
 
 if __name__ == "__main__":
-    update_notion_data()
+    update_precise_data()
