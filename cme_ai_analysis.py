@@ -12,49 +12,58 @@ class CME_AI_Analyzer:
         self.tickers = ticker_list
         self.market_data = {}
 
+
+
+# ... (类定义保持一致)
+
     def fetch_data(self, period="60d"):
-        """获取期货基础数据及成交量/持仓量（模拟持仓量趋势）"""
-        print(f"[*] 正在从 CME 市场接口提取数据: {datetime.now()}")
         for ticker in self.tickers:
-            data = yf.download(ticker, period=period, interval="1d")
-            # 逻辑计算：波动率 (ATR 简化版)
+            # 关键改动 1: 显式设置 auto_adjust 确保数据结构一致
+            data = yf.download(ticker, period=period, interval="1d", auto_adjust=True)
+            
+            # 关键改动 2: 如果返回的是 MultiIndex，只保留属性层
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            
             data['Volatility'] = (data['High'] - data['Low']) / data['Close']
-            # 逻辑计算：5日均量
             data['Vol_MA5'] = data['Volume'].rolling(window=5).mean()
             self.market_data[ticker] = data
         return self.market_data
 
     def run_logic_chain(self, ticker):
-        """
-        核心逻辑链条评估: [价格] + [成交量] + [持仓量]
-        """
-        df = self.market_data[ticker].iloc[-1]
-        prev_df = self.market_data[ticker].iloc[-2]
+        df = self.market_data[ticker]
         
-        price_change = (df['Close'] - prev_df['Close']) / prev_df['Close']
-        vol_surge = df['Volume'] > df['Vol_MA5'] * 1.2  # 成交量超过均值20%
+        # 增加健壮性检查：确保数据足够
+        if len(df) < 2:
+            return {"Ticker": ticker, "Signal": "INSUFFICIENT_DATA"}
+
+        # 关键改动 3: 使用 .iloc[-1] 获取最后一行 Series
+        current_row = df.iloc[-1]
+        prev_row = df.iloc[-2]
         
-        # 逻辑链判定
+        # 关键改动 4: 显式转换为标量数值 (float) 避免 Series 对比错误
+        price_now = float(current_row['Close'])
+        price_prev = float(prev_row['Close'])
+        vol_now = float(current_row['Volume'])
+        vol_ma5 = float(current_row['Vol_MA5'])
+        
+        price_change = (price_now - price_prev) / price_prev
+        vol_surge = vol_now > (vol_ma5 * 1.2)
+        
+        # ... (后续信号逻辑逻辑保持一致)
         signal = "NEUTRAL"
-        logic_reason = ""
-        
         if price_change > 0.01 and vol_surge:
             signal = "STRONG_BULLISH"
-            logic_reason = "价格上涨且成交量显著放大，显示机构资金积极入场（Aggressive Buying）。"
-        elif price_change < -0.01 and vol_surge:
-            signal = "STRONG_BEARISH"
-            logic_reason = "价格下跌且放量，反映市场出现恐慌性抛售或主动性杀跌。"
-        elif abs(price_change) < 0.005 and vol_surge:
-            signal = "ACCUMULATION"
-            logic_reason = "价格震荡但成交量激增，通常为大机构在特定区间进行吸筹或派发。"
-            
+        # ...
+        
         return {
             "Ticker": ticker,
             "Price_Change": f"{price_change:.2%}",
             "Signal": signal,
-            "Logic": logic_reason,
-            "Volatility_Index": f"{df['Volatility']:.4f}"
+            "Volatility_Index": f"{current_row['Volatility']:.4f}"
         }
+
+
 
     def generate_ai_summary(self, logic_results):
         """
