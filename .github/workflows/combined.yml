@@ -10,10 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
+
       - name: Install Dependencies
         run: pip install -r requirements.txt
 
@@ -22,7 +24,6 @@ jobs:
           GH_PERSONAL_TOKEN: ${{ secrets.GH_PERSONAL_TOKEN }}
         run: python cme_bot.py
 
-      # [新增：健壮性检查] 确保 PDF 和 Excel 确实下载成功了
       - name: Verify Downloaded Files
         run: ls -lh *.xls *.pdf
 
@@ -38,7 +39,7 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python cme_data_update.py
 
-     - name: Step 4 - Gemini AI Market Analysis
+      - name: Step 4 - Gemini AI Market Analysis
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
