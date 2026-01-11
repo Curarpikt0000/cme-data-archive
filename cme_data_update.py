@@ -1,85 +1,104 @@
 import os
-import pandas as pd
 import requests
 import pdfplumber
-import re
 from datetime import datetime, timedelta
 
-# 基础配置
+# --- 配置区 ---
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "2e047eb5fd3c80d89d56e2c1ad066138")
-HEADERS = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"}
-
-# 金属坐标配置
-CELL_CONFIG = {
-    "Lead":      {"file": "Lead_Stocks.xls",      "reg": (92, 7),  "elig": (93, 7),  "change": (94, 5)},
-    "Zinc":      {"file": "Zinc_Stocks.xls",      "reg": (82, 7),  "elig": (83, 7),  "change": (84, 5)},
-    "Aluminum":  {"file": "Aluminum_Stocks.xls",  "reg": (77, 7),  "elig": (78, 7),  "change": (79, 5)},
-    "Platinum":  {"file": "PA-PL_Stck_Rprt.xls",  "reg": (71, 7),  "elig": (72, 7),  "change": (73, 5)},
-    "Palladium": {"file": "PA-PL_Stck_Rprt.xls",  "reg": (140, 7), "elig": (141, 7), "change": (142, 5)},
-    "Copper":    {"file": "Copper_Stocks.xls",    "reg": (47, 7),  "elig": (48, 7),  "change": (49, 5)},
-    "Silver":    {"file": "Silver_stocks.xls",    "reg": (72, 7),  "elig": (73, 7),  "change": (74, 5)},
-    "Gold":      {"file": "Gold_Stocks.xls",      "reg": (121, 7), "elig": (123, 7), "change": (124, 5)}
+DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+HEADERS = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
 }
 
-def clean_val(val):
-    try: return float(str(val).replace(',', '').strip()) if not pd.isna(val) else 0.0
-    except: return 0.0
-
-def extract_top_3_dealers(metal_name):
-    """解析 PDF 提取成交量前三的商家"""
+def parse_issues_stops():
+    """解析 PDF 中的做市商及其变动数量"""
+    results = {"Gold": [], "Silver": [], "Platinum": [], "Copper": []}
     pdf_path = "MetalsIssuesAndStopsReport.pdf"
-    if not os.path.exists(pdf_path): return "PDF Missing"
-    extracted = []
-    current_type = "Unknown"
-    # 核心商家列表
-    DEALERS = ["J.P. MORGAN", "HSBC", "ASAHI", "BRINK'S", "SCOTIA", "BOFA", "MANFRA", "MTB"]
+    
+    if not os.path.exists(pdf_path):
+        print("❌ 未找到 PDF 文件")
+        return results
 
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text()
-                if not text or metal_name.upper() not in text.upper(): continue
-                lines = text.split('\n')
-                for line in lines:
-                    if "ISSUED" in line.upper(): current_type = "Issued"
-                    elif "STOPPED" in line.upper(): current_type = "Stopped"
-                    for d in DEALERS:
-                        if d in line.upper():
-                            nums = re.findall(r'\d+', line.replace(',', ''))
-                            if nums:
-                                vol = int(nums[0])
-                                extracted.append({"name": d, "vol": vol, "type": current_type})
-        extracted.sort(key=lambda x: x['vol'], reverse=True)
-        top_3 = extracted[:3]
-        return " | ".join([f"{x['name']}: {x['vol']} ({x['type']})" for x in top_3]) if top_3 else "No significant activity."
-    except Exception as e: return f"PDF Error: {e}"
+    # 映射 PDF 中的关键词到我们的分类
+    metal_map = {"GOLD": "Gold", "SILVER": "Silver", "PLATINUM": "Platinum", "COPPER": "Copper"}
 
-def update_precise_data():
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages[:5]:  # 通常前几页包含所有主要品种
+            tables = page.extract_tables()
+            text = page.extract_text() or ""
+            
+            # 确定当前页面属于哪个金属品种
+            current_metal = None
+            for key, val in metal_map.items():
+                if key in text.upper():
+                    current_metal = val
+                    break
+            
+            if not current_metal: continue
+
+            for table in tables:
+                for row in table:
+                    # 典型的 CME 报表行格式: [Firm Name, Firm #, Issues, Stops]
+                    # 我们过滤掉表头和空行，只取有数值的行
+                    if not row or len(row) < 4: continue
+                    
+                    firm_name = str(row[0]).strip()
+                    issues = str(row[2]).strip().replace(',', '')
+                    stops = str(row[3]).strip().replace(',', '')
+
+                    # 逻辑：如果 Issues 或 Stops 有数字，则记录
+                    change_parts = []
+                    if issues.isdigit() and int(issues) > 0:
+                        change_parts.append(f"{issues} (Issued)")
+                    if stops.isdigit() and int(stops) > 0:
+                        change_parts.append(f"{stops} (Stopped)")
+                    
+                    if change_parts and firm_name not in ["TOTAL", "Firm Name"]:
+                        # 格式化为: "JPM: 100 (Issued) | 50 (Stopped)"
+                        results[current_metal].append(f"{firm_name}: {' | '.join(change_parts)}")
+
+    # 将数组转化为字符串
+    return {k: (" | ".join(v) if v else "No significant activity.") for k, v in results.items()}
+
+def update_notion_inventory():
     date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    for metal, cfg in CELL_CONFIG.items():
-        if not os.path.exists(cfg['file']): continue
+    movement_data = parse_issues_stops()
+    
+    for metal, dealer_info in movement_data.items():
         try:
-            try: df = pd.read_html(cfg['file'])[0]
-            except: df = pd.read_excel(cfg['file'], header=None)
-            reg = clean_val(df.iloc[cfg['reg'][0], cfg['reg'][1]])
-            elig = clean_val(df.iloc[cfg['elig'][0], cfg['elig'][1]])
-            change = clean_val(df.iloc[cfg['change'][0], cfg['change'][1]])
-            anomalies = extract_top_3_dealers(metal)
+            # 1. 查询当天的 Notion 页面
+            query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+            query_payload = {
+                "filter": {
+                    "and": [
+                        {"property": "Date", "date": {"equals": date_str}},
+                        {"property": "Metal Type", "select": {"equals": metal}}
+                    ]
+                }
+            }
+            res = requests.post(query_url, headers=HEADERS, json=query_payload).json()
 
-            q_res = requests.post(f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", headers=HEADERS, 
-                                 json={"filter": {"and": [{"property": "Date", "date": {"equals": date_str}},
-                                                         {"property": "Metal Type", "select": {"equals": metal}}]}}).json()
-            if q_res.get("results"):
-                pid = q_res["results"][0]["id"]
-                requests.patch(f"https://api.notion.com/v1/pages/{pid}", headers=HEADERS, 
-                              json={"properties": {
-                                  "Total Registered": {"number": reg}, "Total Eligible": {"number": elig},
-                                  "Net Change": {"number": change},
-                                  "JPM/Asahi etc Stock change": {"rich_text": [{"text": {"content": anomalies}}]}
-                              }})
-                print(f"✅ {metal} 库存与 Top 3 商家更新成功")
-        except Exception as e: print(f"❌ {metal} 错误: {e}")
+            if not res.get("results"):
+                print(f"ℹ️ {metal} {date_str} 记录尚未在 Notion 创建，跳过")
+                continue
+
+            pid = res["results"][0]["id"]
+
+            # 2. 更新做市商异动字段 (JPM/Asahi etc Stock change)
+            update_payload = {
+                "properties": {
+                    "JPM/Asahi etc Stock change": {
+                        "rich_text": [{"text": {"content": dealer_info}}]
+                    }
+                }
+            }
+            requests.patch(f"https://api.notion.com/v1/pages/{pid}", headers=HEADERS, json=update_payload)
+            print(f"✅ {metal} 已成功写入异动: {dealer_info}")
+
+        except Exception as e:
+            print(f"❌ {metal} 更新失败: {e}")
 
 if __name__ == "__main__":
-    update_precise_data()
+    update_notion_inventory()
