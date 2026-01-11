@@ -7,3 +7,4 @@ openpyxl
 pdfplumber
 yfinance
 google-generativeai
+google-genai
