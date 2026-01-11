@@ -20,8 +20,10 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # 必须安装 PyGithub 解决 Step 1 的报错
-          pip install -r requirements.txt
+          # 强力重装所有依赖
+          pip install --force-reinstall -r requirements.txt
+          # 调试：验证 PyGithub 是否安装成功
+          pip show PyGithub || echo "❌ PyGithub installation failed"
 
       - name: Step 1 - Download CME Files
         env:
@@ -34,13 +36,13 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python notion_sync.py
 
-      - name: Step 3 - AI Driven Inventory Update
+      - name: Step 3 - AI Dealer Inventory Extraction
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
-          # 再次确保环境纯净以防 Google 库冲突
+          # 解决 Google 库冲突的最后防线
           pip uninstall -y google-genai google-generativeai
           pip install google-generativeai
           python cme_data_update.py
