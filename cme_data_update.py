@@ -10,9 +10,13 @@ DATABASE_ID = "2e047eb5fd3c80d89d56e2c1ad066138"
 HEADERS = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"}
 
 # 精确坐标配置 (Excel 行号-1, 列号H=7, F=5)
+# ... 前面导入保持不变 ...
+
+# 8 种金属的精确坐标 (H列索引7, F列索引5)
 CELL_CONFIG = {
     "Lead":      {"file": "Lead_Stocks.xls",      "reg": (92, 7), "elig": (93, 7), "change": (92, 5)},
     "Zinc":      {"file": "Zinc_Stocks.xls",      "reg": (82, 7), "elig": (83, 7), "change": (82, 5)},
+    "Aluminum":  {"file": "Aluminum_Stocks.xls",  "reg": (72, 7), "elig": (73, 7), "change": (72, 5)}, # 补全铝
     "Platinum":  {"file": "PA-PL_Stck_Rprt.xls",  "reg": (71, 7), "elig": (72, 7), "change": (71, 5)},
     "Palladium": {"file": "PA-PL_Stck_Rprt.xls",  "reg": (140, 7), "elig": (141, 7), "change": (140, 5)},
     "Copper":    {"file": "Copper_Stocks.xls",    "reg": (47, 7), "elig": (48, 7), "change": (47, 5)},
@@ -20,6 +24,7 @@ CELL_CONFIG = {
     "Gold":      {"file": "Gold_Stocks.xls",      "reg": (121, 7), "elig": (123, 7), "change": (121, 5)}
 }
 
+# ... 后续 update_precise_data() 函数保持不变 ...
 def clean_val(val):
     try:
         return float(str(val).replace(',', '').strip()) if not pd.isna(val) else 0.0
