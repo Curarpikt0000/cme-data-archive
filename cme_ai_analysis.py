@@ -2,14 +2,13 @@ import os
 import requests
 import yfinance as yf
 import pdfplumber
-from google import genai  # 注意：这里改用了新版库
+from google import genai  # 使用新版 SDK
 from datetime import datetime, timedelta
 
-# --- 配置区 ---
-# 确保在 GitHub Repository Secrets 中设置了这些变量
+# --- 配置读取 ---
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "2e047eb5fd3c80d89d56e2c1ad066138")
+DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}", 
@@ -19,17 +18,18 @@ HEADERS = {
 
 def get_ai_analysis():
     if not GOOGLE_API_KEY:
-        print("❌ 错误: 未找到 GOOGLE_API_KEY 环境变量")
+        print("❌ 错误: GOOGLE_API_KEY 为空，请检查 GitHub Secrets 配置")
         return
 
-    # 初始化新版 Gemini Client
+    # 初始化新版客户端
     client = genai.Client(api_key=GOOGLE_API_KEY)
     
+    # 获取分析日期 (昨日)
     date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     tickers = {"Gold": "GC=F", "Silver": "SI=F", "Platinum": "PL=F", "Copper": "HG=F"}
 
-    # 1. 提取 PDF 信息
-    pdf_text = ""
+    # 1. 提取本地 PDF 内容 (Step 1 下载的文件)
+    pdf_text = "No PDF data available."
     pdf_path = "MetalsIssuesAndStopsReport.pdf"
     if os.path.exists(pdf_path):
         try:
@@ -38,20 +38,26 @@ def get_ai_analysis():
         except Exception as e:
             print(f"⚠️ PDF 读取失败: {e}")
 
-    # 2. 遍历品种
     for metal, sym in tickers.items():
         try:
-            # 价格提取
+            # 2. 获取行情数据并强制标量化
             hist = yf.download(sym, period="5d", progress=False)
-            if len(hist) < 2:
-                p_info = "Price data unavailable."
+            if hist.empty or len(hist) < 2:
+                p_info = "Price unavailable"
             else:
-                last_price = float(hist['Close'].iloc[-1])
-                prev_price = float(hist['Close'].iloc[-2])
+                # 使用 .item() 彻底避免 Series 格式化错误
+                last_price = hist['Close'].iloc[-1]
+                prev_price = hist['Close'].iloc[-2]
+                
+                # 处理 MultiIndex 结构下的提取
+                if hasattr(last_price, 'item'):
+                    last_price = last_price.item()
+                    prev_price = prev_price.item()
+                
                 change_pct = (last_price - prev_price) / prev_price * 100
                 p_info = f"Price {last_price:.2f} ({change_pct:+.2f}%)"
 
-            # Notion 数据查询
+            # 3. 从 Notion 查询 Step 3 填入的数据
             query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
             query_payload = {
                 "filter": {
@@ -61,30 +67,39 @@ def get_ai_analysis():
                     ]
                 }
             }
-            q_res = requests.post(query_url, headers=HEADERS, json=query_payload).json()
+            res = requests.post(query_url, headers=HEADERS, json=query_payload).json()
 
-            if not q_res.get("results"):
-                print(f"ℹ️ {metal} 无记录 ({date_str})")
+            if not res.get("results"):
+                print(f"ℹ️ {metal} 未找到记录，跳过")
                 continue
             
-            page = q_res["results"][0]
+            page = res["results"][0]
             pid = page["id"]
             props = page["properties"]
             
             net_chg = props.get("Net Change", {}).get("number", 0)
-            dealers_list = props.get("JPM/Asahi etc Stock change", {}).get("rich_text", [])
-            dealers = dealers_list[0]["text"]["content"] if dealers_list else "None"
+            dealer_text = props.get("JPM/Asahi etc Stock change", {}).get("rich_text", [])
+            dealers = dealer_text[0]["text"]["content"] if dealer_text else "No dealer info"
 
-            # 3. AI 深度研判 (使用新版 SDK 语法)
-            prompt = f"分析 {metal} {date_str}：价格 {p_info}，库存变动 {net_chg}，做市商 {dealers}。PDF摘要：{pdf_text[:800]}。请给2句关于挤仓风险或看涨情绪的深度研判。"
+            # 4. 调用 AI 进行深度研判
+            prompt = f"""
+            分析 {metal} ({date_str})：
+            - 价格: {p_info}
+            - 库存净变动: {net_chg}
+            - 关键做市商异动: {dealers}
+            - PDF交割摘要: {pdf_text[:800]}
+
+            基于库存流向(Registered/Eligible)和机构搬货逻辑，提供2句硬核研判。
+            直接指出是否存在挤仓风险或机构建仓迹象。
+            """
             
             response = client.models.generate_content(
                 model="gemini-1.5-flash",
                 contents=prompt
             )
             ai_insight = response.text.strip()
-            
-            # 4. 回填 Notion
+
+            # 5. 回填 Notion
             update_payload = {
                 "properties": {
                     "Name": {"title": [{"text": {"content": f"AI Insight: {metal} {date_str}"}}]},
@@ -92,10 +107,10 @@ def get_ai_analysis():
                 }
             }
             requests.patch(f"https://api.notion.com/v1/pages/{pid}", headers=HEADERS, json=update_payload)
-            print(f"✅ {metal} 同步成功")
+            print(f"✅ {metal} AI 分析同步成功")
 
         except Exception as e:
-            print(f"❌ {metal} 错误: {str(e)}")
+            print(f"❌ {metal} 处理出错: {str(e)}")
 
 if __name__ == "__main__":
     get_ai_analysis()
