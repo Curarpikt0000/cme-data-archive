@@ -38,10 +38,9 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python cme_data_update.py
 
-      - name: Step 4 - Gemini AI Market Analysis
-        env:
-          CME_CLIENT_ID: "api_chao"
-          CME_CLIENT_SECRET: ${{ secrets.CME_CLIENT_SECRET }}
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        run: python cme_ai_analysis.py
+     - name: Step 4 - Gemini AI Market Analysis
+  env:
+    GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+    NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+  run: python cme_ai_analysis.py
