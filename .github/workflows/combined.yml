@@ -2,8 +2,8 @@ name: Combined CME Smart Workflow
 
 on:
   schedule:
-    - cron: '0 2 * * *' # 日本时间 11:00 AM (UTC 2:00 AM)
-  workflow_dispatch: # 支持手动点击运行测试
+    - cron: '0 2 * * *' # 日本时间 11:00 AM
+  workflow_dispatch: 
 
 jobs:
   full-process:
@@ -15,18 +15,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # 推荐使用 3.11+ 以获得最佳库兼容性
+          python-version: '3.11' # 2026年标准环境
           cache: 'pip'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # 1. 强力清场：卸载所有可能冲突的 Google 旧版库
-          pip uninstall -y google-generativeai google-genai google-api-core
-          # 2. 安装最新依赖（请确保 requirements.txt 中包含 google-genai）
-          pip install -r requirements.txt
-          # 3. 验证关键库安装情况
-          pip list | grep -E "google-genai|PyGithub|pdfplumber"
+          # 1. 强力清场：卸载所有旧包，解决 ImportError 和命名空间冲突
+          pip uninstall -y google-generativeai google-genai google-api-core googleapis-common-protos google
+          # 2. 安装 2026 生产级依赖
+          pip install google-genai PyGithub yfinance pdfplumber requests pandas
 
       - name: Step 1 - Download CME Files
         env:
@@ -39,20 +37,19 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python notion_sync.py
 
-      - name: Step 3 - AI Driven Dealer Extraction
-        # 此步骤利用 AI 直接阅读 PDF 并生成“做市商：数量 (动作)”的异动结论
+      - name: Step 3 - AI Driven Dealer Inventory Extraction
+        # 该步骤利用 AI 深度解析 PDF 异动并写入 Notion
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: |
-          # 再次确保环境纯净，解决 Step 3 可能遇到的导入报错
-          pip uninstall -y google-generativeai google-genai
-          pip install google-genai
+          # 验证密钥是否成功注入（不显示具体值）
+          if [ -z "$GOOGLE_API_KEY" ]; then echo "❌ Secret GOOGLE_API_KEY is empty!"; exit 1; fi
           python cme_data_update.py
 
       - name: Step 4 - Gemini AI Market Analysis
-        # 此步骤基于 Step 3 写入的数据进行深度的市场博弈分析
+        # 基于 Step 3 的数据进行深度市场博弈分析
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
