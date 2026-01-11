@@ -35,9 +35,11 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python notion_sync.py
 
-      - name: Step 3 - AI Driven Inventory Update
+      # ... 前面的步骤保持不变 ...
+
+      - name: Step 3 - AI Driven Data Extraction
         env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }} # 必须注入
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python cme_data_update.py
@@ -47,4 +49,7 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        run: python cme_ai_analysis.py
+        run: |
+          pip uninstall -y google-genai google-generativeai
+          pip install google-generativeai
+          python cme_ai_analysis.py
