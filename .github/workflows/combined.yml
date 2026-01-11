@@ -3,7 +3,7 @@ name: Combined CME Smart Workflow
 on:
   schedule:
     - cron: '0 2 * * *' # 日本时间 11:00 AM
-  workflow_dispatch:
+  workflow_dispatch: # 允许手动触发
 
 jobs:
   full-process:
@@ -16,25 +16,28 @@ jobs:
           python-version: '3.10'
       - name: Install Dependencies
         run: pip install -r requirements.txt
+
       - name: Step 1 - Download CME Files
         env:
           GH_PERSONAL_TOKEN: ${{ secrets.GH_PERSONAL_TOKEN }}
         run: python cme_bot.py
+
       - name: Step 2 - Sync Links to Notion
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python notion_sync.py
+
       - name: Step 3 - Precise Inventory Update
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }} # 必须加这一行
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }} # <-- 必须补全这一行
         run: python cme_data_update.py
-        
-     - name: Step 4 - Gemini AI Market Analysis
-        run: python cme_ai_analysis.py
+
+      - name: Step 4 - Gemini AI Market Analysis
         env:
-          # 必须在这里把 GitHub Secrets 映射给脚本使用
           CME_CLIENT_ID: "api_chao"
           CME_CLIENT_SECRET: ${{ secrets.CME_CLIENT_SECRET }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: python cme_ai_analysis.py
