@@ -20,10 +20,9 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # 强力重装所有依赖
-          pip install --force-reinstall -r requirements.txt
-          # 调试：验证 PyGithub 是否安装成功
-          pip show PyGithub || echo "❌ PyGithub installation failed"
+          # 彻底清除旧包，安装 2026 标准的新版 SDK
+          pip uninstall -y google-generativeai google-genai
+          pip install -r requirements.txt
 
       - name: Step 1 - Download CME Files
         env:
@@ -36,16 +35,12 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python notion_sync.py
 
-      - name: Step 3 - AI Dealer Inventory Extraction
+      - name: Step 3 - AI Driven Dealer Extraction
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        run: |
-          # 解决 Google 库冲突的最后防线
-          pip uninstall -y google-genai google-generativeai
-          pip install google-generativeai
-          python cme_data_update.py
+        run: python cme_data_update.py
 
       - name: Step 4 - Gemini AI Market Analysis
         env:
