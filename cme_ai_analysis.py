@@ -1,88 +1,144 @@
+import os
+import requests
 import pandas as pd
 import yfinance as yf
-import requests
+from datetime import datetime
 
 class CME_AI_Analyzer:
-    def __init__(self, client_id=None, client_secret=None):
-        self.tickers = ["GC=F", "SI=F", "PL=F"]
+    def __init__(self):
+        # 1. 初始化配置与凭据 (从 GitHub Secrets 读取)
+        self.cme_client_id = os.getenv("CME_CLIENT_ID", "api_chao")
+        self.cme_client_secret = os.getenv("CME_CLIENT_SECRET")
+        self.notion_token = os.getenv("NOTION_TOKEN")
+        self.notion_db_id = os.getenv("NOTION_DATABASE_ID")
+        
+        self.tickers = ["GC=F", "SI=F", "PL=F"] # 金, 银, 铂
         self.market_data = {}
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.token = None
 
-    def get_access_token(self):
-        """ 获取 CME OAuth Token"""
-        if not self.client_id or not self.client_secret:
+    def get_cme_oauth_token(self):
+        """ 通过 OAuth 2.0 获取 CME 访问令牌"""
+        if not self.cme_client_secret:
+            print("[!] 未检测到 CME_CLIENT_SECRET，跳过 API 验证。")
             return None
+        
         auth_url = "https://auth.cmegroup.com/as/token.oauth2"
-        payload = {'grant_type': 'client_credentials', 'client_id': self.client_id, 'client_secret': self.client_secret}
+        payload = {
+            'grant_type': 'client_credentials',
+            'client_id': self.cme_client_id,
+            'client_secret': self.cme_client_secret
+        }
         try:
-            r = requests.post(auth_url, data=payload)
-            self.token = r.json().get('access_token')
-            return self.token
+            r = requests.post(auth_url, data=payload, timeout=10)
+            return r.json().get('access_token')
         except Exception as e:
-            print(f"Token获取失败: {e}")
+            print(f"[!] CME Token 获取失败: {e}")
             return None
 
-    def fetch_data(self, period="60d"):
+    def fetch_market_data(self):
+        """抓取数据并修复 MultiIndex 索引问题"""
+        print(f"[*] 启动数据抓取流水线: {datetime.now()}")
         for ticker in self.tickers:
-            data = yf.download(ticker, period=period, interval="1d", auto_adjust=True)
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = data.columns.get_level_values(0)
+            # auto_adjust 确保价格字段统一
+            df = yf.download(ticker, period="60d", interval="1d", auto_adjust=True)
             
-            # 计算指标并丢弃空值
-            data['Volatility'] = (data['High'] - data['Low']) / data['Close']
-            data['Vol_MA5'] = data['Volume'].rolling(window=5).mean()
-            self.market_data[ticker] = data.dropna()
+            # 健壮性修复：如果 yfinance 返回多级索引，则展平它
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            
+            # 计算量化指标
+            df['Volatility'] = (df['High'] - df['Low']) / df['Close']
+            df['Vol_MA5'] = df['Volume'].rolling(window=5).mean()
+            self.market_data[ticker] = df.dropna()
         return self.market_data
 
-    def run_logic_chain(self, ticker):
+    def analyze_logic_chain(self, ticker):
+        """核心逻辑链条：价格 + 成交量 + 波动率"""
         df = self.market_data.get(ticker)
         
-        # 核心修复点：初始化所有字段，确保 Schema 一致
-        result = {
+        # 默认返回结构，防止 KeyError
+        report = {
             "Ticker": ticker,
             "Price_Change": "0.00%",
-            "Signal": "NO_DATA",
-            "Logic": "数据不足，无法分析。",
-            "Volatility_Index": "0.0000"
+            "Signal": "NEUTRAL",
+            "Logic": "持平或波动过小，无显著信号。",
+            "Vol_Idx": "0.0000"
         }
 
-        if df is None or len(df) < 5:
-            return result
+        if df is None or len(df) < 2:
+            report["Logic"] = "数据源缺失，请检查网络。"
+            return report
 
-        # 转换为标量避免 ValueError
-        curr = df.iloc[-1]
-        prev = df.iloc[-2]
+        # 转换为标量，彻底解决 ValueError
+        last_row = df.iloc[-1]
+        prev_row = df.iloc[-2]
         
-        p_change = (float(curr['Close']) - float(prev['Close'])) / float(prev['Close'])
-        vol_surge = float(curr['Volume']) > (float(curr['Vol_MA5']) * 1.2)
+        p_now = float(last_row['Close'])
+        p_prev = float(prev_row['Close'])
+        v_now = float(last_row['Volume'])
+        v_ma5 = float(last_row['Vol_MA5'])
         
+        p_change = (p_now - p_prev) / p_prev
+        vol_surge = v_now > (v_ma5 * 1.2) # 成交量突增20%
+
         # 逻辑判定
         if p_change > 0.01 and vol_surge:
-            result.update({"Signal": "STRONG_BULLISH", "Logic": "价升量增，机构吸筹显著。"})
+            report.update({"Signal": "STRONG_BULLISH", "Logic": "价升量增：机构资金入场，趋势极强。"})
         elif p_change < -0.01 and vol_surge:
-            result.update({"Signal": "STRONG_BEARISH", "Logic": "价跌量增，空头主动杀跌。"})
-        else:
-            result.update({"Signal": "NEUTRAL", "Logic": "市场波动率正常，处于整理区间。"})
-            
-        result["Price_Change"] = f"{p_change:.2%}"
-        result["Volatility_Index"] = f"{float(curr['Volatility']):.4f}"
-        return result
+            report.update({"Signal": "STRONG_BEARISH", "Logic": "价跌量增：恐慌性抛售，下行压力大。"})
+        
+        report["Price_Change"] = f"{p_change:.2%}"
+        report["Vol_Idx"] = f"{float(last_row['Volatility']):.4f}"
+        return report
 
-    def generate_ai_summary(self, results):
-        print("\n[AI Market Insights - CME Analysis Summary]")
-        for res in results:
-            # 现在可以安全访问所有 Key 了
-            print(f"> {res['Ticker']} [{res['Signal']}]: {res['Logic']} (波动率: {res['Volatility_Index']})")
+    def sync_to_notion(self, report):
+        """ 同步至 Notion 数据库"""
+        if not self.notion_token or not self.notion_db_id:
+            print(f"[!] {report['Ticker']} 分析完成，但未配置 Notion 环境变量，仅本地打印。")
+            return
+
+        url = "https://api.notion.com/v1/pages"
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Notion-Version": "2022-06-28",
+            "Content-Type": "application/json"
+        }
+        
+        # 映射 Ticker 到 Notion 的 'Metal Type' 列
+        metal_map = {"GC=F": "Gold", "SI=F": "Silver", "PL=F": "Platinum"}
+        
+        payload = {
+            "parent": {"database_id": self.notion_db_id},
+            "properties": {
+                "Ad Name": {"title": [{"text": {"content": f"AI Insight: {report['Ticker']}"}}]},
+                "Metal Type": {"select": {"name": metal_map.get(report['Ticker'], "Other")}},
+                "Date": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}},
+                "Activity Note": {"rich_text": [{"text": {"content": f"[{report['Signal']}] {report['Logic']}"}}]},
+                "Volatility Index": {"number": float(report['Vol_Idx'])}
+            }
+        }
+        
+        try:
+            res = requests.post(url, json=payload, headers=headers)
+            if res.status_code == 200:
+                print(f"[√] {report['Ticker']} 成功同步至 Notion。")
+            else:
+                print(f"[×] Notion 同步失败: {res.text}")
+        except Exception as e:
+            print(f"[!] 请求 Notion API 异常: {e}")
 
 if __name__ == "__main__":
-    # 填入您刚才创建的 api_chao 凭据
-    MY_ID = "api_chao"
-    MY_SECRET = "T*a@e_*RJg#e@R6g7*Yj6g9_" 
+    bot = CME_AI_Analyzer()
     
-    analyzer = CME_AI_Analyzer(MY_ID, MY_SECRET)
-    analyzer.fetch_data()
+    # 步骤 1: 获取 CME Token (为后续扩展官方 API 预留)
+    bot.get_cme_oauth_token()
     
-    analysis_results = [analyzer.run_logic_chain(t) for t in analyzer.tickers]
-    analyzer.generate_ai_summary(analysis_results)
+    # 步骤 2: 抓取与分析
+    bot.fetch_market_data()
+    
+    print("\n[AI Market Analysis Report]")
+    for ticker in bot.tickers:
+        analysis = bot.analyze_logic_chain(ticker)
+        print(f"> {analysis['Ticker']} [{analysis['Signal']}]: {analysis['Logic']}")
+        
+        # 步骤 3: 推送至 Notion
+        bot.sync_to_notion(analysis)
