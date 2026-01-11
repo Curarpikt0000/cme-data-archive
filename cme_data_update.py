@@ -5,12 +5,12 @@ import pdfplumber
 import re
 from datetime import datetime, timedelta
 
-# 配置
+# 基础配置
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("NOTION_DATABASE_ID", "2e047eb5fd3c80d89d56e2c1ad066138")
 HEADERS = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"}
 
-# 坐标配置
+# 金属坐标配置
 CELL_CONFIG = {
     "Lead":      {"file": "Lead_Stocks.xls",      "reg": (92, 7),  "elig": (93, 7),  "change": (94, 5)},
     "Zinc":      {"file": "Zinc_Stocks.xls",      "reg": (82, 7),  "elig": (83, 7),  "change": (84, 5)},
@@ -27,12 +27,13 @@ def clean_val(val):
     except: return 0.0
 
 def extract_top_3_dealers(metal_name):
-    """解析 PDF 提取成交量前三的商家及其动作"""
+    """解析 PDF 提取成交量前三的商家"""
     pdf_path = "MetalsIssuesAndStopsReport.pdf"
-    if not os.path.exists(pdf_path): return "PDF missing"
+    if not os.path.exists(pdf_path): return "PDF Missing"
     extracted = []
     current_type = "Unknown"
-    DEALERS = ["J.P. MORGAN", "HSBC", "ASAHI", "BRINK'S", "SCOTIA", "BOFA", "MANFRA", "MTB", "INTL FCSTONE"]
+    # 核心商家列表
+    DEALERS = ["J.P. MORGAN", "HSBC", "ASAHI", "BRINK'S", "SCOTIA", "BOFA", "MANFRA", "MTB"]
 
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -51,10 +52,10 @@ def extract_top_3_dealers(metal_name):
                                 extracted.append({"name": d, "vol": vol, "type": current_type})
         extracted.sort(key=lambda x: x['vol'], reverse=True)
         top_3 = extracted[:3]
-        return " | ".join([f"{x['name']}: {x['vol']} ({x['type']})" for x in top_3]) if top_3 else "No significant dealer activity."
+        return " | ".join([f"{x['name']}: {x['vol']} ({x['type']})" for x in top_3]) if top_3 else "No significant activity."
     except Exception as e: return f"PDF Error: {e}"
 
-def update_data():
+def update_precise_data():
     date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     for metal, cfg in CELL_CONFIG.items():
         if not os.path.exists(cfg['file']): continue
@@ -64,8 +65,8 @@ def update_data():
             reg = clean_val(df.iloc[cfg['reg'][0], cfg['reg'][1]])
             elig = clean_val(df.iloc[cfg['elig'][0], cfg['elig'][1]])
             change = clean_val(df.iloc[cfg['change'][0], cfg['change'][1]])
-            dealer_info = extract_top_3_dealers(metal)
-            
+            anomalies = extract_top_3_dealers(metal)
+
             q_res = requests.post(f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", headers=HEADERS, 
                                  json={"filter": {"and": [{"property": "Date", "date": {"equals": date_str}},
                                                          {"property": "Metal Type", "select": {"equals": metal}}]}}).json()
@@ -75,10 +76,10 @@ def update_data():
                               json={"properties": {
                                   "Total Registered": {"number": reg}, "Total Eligible": {"number": elig},
                                   "Net Change": {"number": change},
-                                  "JPM/Asahi etc Stock change": {"rich_text": [{"text": {"content": dealer_info}}]}
+                                  "JPM/Asahi etc Stock change": {"rich_text": [{"text": {"content": anomalies}}]}
                               }})
-                print(f"✅ {metal} updated.")
-        except Exception as e: print(f"❌ {metal} error: {e}")
+                print(f"✅ {metal} 库存与 Top 3 商家更新成功")
+        except Exception as e: print(f"❌ {metal} 错误: {e}")
 
 if __name__ == "__main__":
-    update_data()
+    update_precise_data()
