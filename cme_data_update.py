@@ -15,15 +15,18 @@ HEADERS = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "applicati
 # 8 种金属的精确坐标 (H列索引7, F列索引5)
 # 8 种金属的精确坐标配置 (已根据你的最新反馈更新 Aluminum)
 # 逻辑：Excel行号 - 1 | H列=7 | F列=5
+# 8 种金属的精确坐标配置 (已更新 Net Change 偏移逻辑)
+# 规则：普通金属 Change = Reg行号 + 2 | 黄金 Change = Reg行号 + 3
+# 转换：代码索引 = Excel行号 - 1 | H列=7 | F列=5
 CELL_CONFIG = {
-    "Lead":      {"file": "Lead_Stocks.xls",      "reg": (92, 7), "elig": (93, 7),  "change": (92, 5)},
-    "Zinc":      {"file": "Zinc_Stocks.xls",      "reg": (82, 7), "elig": (83, 7),  "change": (82, 5)},
-    "Aluminum":  {"file": "Aluminum_Stocks.xls",  "reg": (77, 7), "elig": (78, 7),  "change": (77, 5)}, # 修正为 H78/H79/F78
-    "Platinum":  {"file": "PA-PL_Stck_Rprt.xls",  "reg": (71, 7), "elig": (72, 7),  "change": (71, 5)},
-    "Palladium": {"file": "PA-PL_Stck_Rprt.xls",  "reg": (140, 7), "elig": (141, 7), "change": (140, 5)},
-    "Copper":    {"file": "Copper_Stocks.xls",    "reg": (47, 7),  "elig": (48, 7),  "change": (47, 5)},
-    "Silver":    {"file": "Silver_stocks.xls",    "reg": (72, 7),  "elig": (73, 7),  "change": (72, 5)},
-    "Gold":      {"file": "Gold_Stocks.xls",      "reg": (121, 7), "elig": (123, 7), "change": (121, 5)}
+    "Lead":      {"file": "Lead_Stocks.xls",      "reg": (92, 7),  "elig": (93, 7),  "change": (94, 5)},  # H93 -> F95 (Idx 94)
+    "Zinc":      {"file": "Zinc_Stocks.xls",      "reg": (82, 7),  "elig": (83, 7),  "change": (84, 5)},  # H83 -> F85 (Idx 84)
+    "Aluminum":  {"file": "Aluminum_Stocks.xls",  "reg": (77, 7),  "elig": (78, 7),  "change": (79, 5)},  # H78 -> F80 (Idx 79)
+    "Platinum":  {"file": "PA-PL_Stck_Rprt.xls",  "reg": (71, 7),  "elig": (72, 7),  "change": (73, 5)},  # H72 -> F74 (Idx 73)
+    "Palladium": {"file": "PA-PL_Stck_Rprt.xls",  "reg": (140, 7), "elig": (141, 7), "change": (142, 5)}, # H141 -> F143 (Idx 142)
+    "Copper":    {"file": "Copper_Stocks.xls",    "reg": (47, 7),  "elig": (48, 7),  "change": (49, 5)},  # H48 -> F50 (Idx 49)
+    "Silver":    {"file": "Silver_stocks.xls",    "reg": (72, 7),  "elig": (73, 7),  "change": (74, 5)},  # H73 -> F75 (Idx 74)
+    "Gold":      {"file": "Gold_Stocks.xls",      "reg": (121, 7), "elig": (123, 7), "change": (124, 5)}  # H122 -> F125 (Idx 124)
 }
 # ... 后续 update_precise_data() 函数保持不变 ...
 def clean_val(val):
