@@ -20,9 +20,8 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # 强制卸载冲突包，只安装稳健版
-          pip uninstall -y google-genai google-generativeai
-          pip install google-generativeai yfinance pdfplumber requests pandas
+          # 必须安装 PyGithub 解决 Step 1 的报错
+          pip install -r requirements.txt
 
       - name: Step 1 - Download CME Files
         env:
@@ -35,21 +34,20 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python notion_sync.py
 
-      # ... 前面的步骤保持不变 ...
-
-      - name: Step 3 - AI Driven Data Extraction
+      - name: Step 3 - AI Driven Inventory Update
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        run: python cme_data_update.py
+        run: |
+          # 再次确保环境纯净以防 Google 库冲突
+          pip uninstall -y google-genai google-generativeai
+          pip install google-generativeai
+          python cme_data_update.py
 
       - name: Step 4 - Gemini AI Market Analysis
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        run: |
-          pip uninstall -y google-genai google-generativeai
-          pip install google-generativeai
-          python cme_ai_analysis.py
+        run: python cme_ai_analysis.py
