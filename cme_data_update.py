@@ -20,7 +20,7 @@ def call_gemini_extraction_rest(pdf_text):
     使用 REST API 解决 404 路径问题。
     由于 2.0-flash 配额可能受限，此处使用稳定性更高的 1.5-flash。
     """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GOOGLE_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={GOOGLE_API_KEY}"
     
     prompt = f"""
     分析以下 CME 金属交割报告文本，提取 Gold, Silver, Platinum, Copper 的异动细节。
