@@ -1,107 +1,114 @@
 import os
+import re
 import requests
 import pdfplumber
-import json
+import pandas as pd
 from datetime import datetime, timedelta
 
-# --- 配置区 ---
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# --- 配置 ---
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+DATABASE_ID = os.getenv("NOTION_DATABASE_ID") # 已修改为读取环境变量
+HEADERS = {"Authorization": f"Bearer {NOTION_TOKEN}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"}
 
-HEADERS = {
-    "Authorization": f"Bearer {NOTION_TOKEN}",
-    "Content-Type": "application/json",
-    "Notion-Version": "2022-06-28"
+# 做市商名单
+MARKET_MAKERS = ['JPMORGAN', 'CITI', 'HSBC', 'SCOTIA', 'BOFA', 'WELLS', 'STONEX']
+# CME OI 产品 ID
+OI_CONFIG = {
+    "Gold": 437, "Silver": 450, "Copper": 446, "Platinum": 462, 
+    "Palladium": 464, "Aluminum": 8416, "Zinc": 8417, "Lead": 8418
 }
 
-def call_gemini_extraction_rest(pdf_text):
-    """
-    使用 REST API 解决 404 路径问题。
-    由于 2.0-flash 配额可能受限，此处使用稳定性更高的 1.5-flash。
-    """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={GOOGLE_API_KEY}"
-    
-    prompt = f"""
-    分析以下 CME 金属交割报告文本，提取 Gold, Silver, Platinum, Copper 的异动细节。
-    
-    要求：
-    1. 找到各个金属下 Issues 或 Stops 数量大于 0 的做市商 (Firm Name)。
-    2. 生成事实结论。示例: "JPM: 500 (Issued) | BOFA: 200 (Stopped)"。
-    3. 必须严格以 JSON 格式返回，不要 Markdown 标签。
-       格式: {{"Gold": "结论", "Silver": "结论", "Platinum": "结论", "Copper": "结论"}}
-    4. 若无显著异动，请填 "No significant activity."。
-
-    报告文本：
-    {pdf_text[:15000]}
-    """
-    
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    
+def get_cme_oi(product_id, date_str):
+    """从 CME 网站抓取 Open Interest"""
     try:
-        res = requests.post(url, json=payload, timeout=30)
+        cme_date = date_str.replace("-", "")
+        url = f"https://www.cmegroup.com/CmeWS/mvc/Volume/Details/F/{product_id}/{cme_date}/P"
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+        data = r.json()
+        if 'items' in data:
+            oi_list = [int(str(i.get('openInterest', 0)).replace(',', '')) for i in data['items'] if i.get('openInterest')]
+            return max(oi_list) if oi_list else 0
+    except: return 0
+    return 0
+
+def download_pdf_from_github(date_str, filename="MetalsIssuesAndStopsReport.pdf"):
+    """从自己的 GitHub 仓库下载当日归档的 PDF"""
+    print(f"正在从云端拉取 {filename} ...")
+    url = f"https://raw.githubusercontent.com/Curarpikt0000/cme-data-archive/main/data/{date_str}/{filename}"
+    try:
+        res = requests.get(url, timeout=30)
         if res.status_code == 200:
-            content = res.json()['candidates'][0]['content']['parts'][0]['text']
-            # 清洗 AI 可能带出的 Markdown 代码块
-            clean_json = content.replace('```json', '').replace('```', '').strip()
-            return json.loads(clean_json)
-        else:
-            print(f"❌ AI 提取失败 ({res.status_code}): {res.text}")
-            return None
+            with open(filename, 'wb') as f:
+                f.write(res.content)
+            return True
     except Exception as e:
-        print(f"❌ REST 请求异常: {e}")
-        return None
+        print(f"拉取 PDF 失败: {e}")
+    return False
 
-def run_update():
+def parse_delivery_report(metal_name, date_str):
+    """解析 PDF 查找做市商异动"""
     pdf_path = "MetalsIssuesAndStopsReport.pdf"
-    if not os.path.exists(pdf_path):
-        print("❌ 找不到 PDF 文件")
-        return
+    
+    # 增加逻辑：如果本地没有，去 GitHub 拉取
+    if not os.path.exists(pdf_path): 
+        if not download_pdf_from_github(date_str, pdf_path):
+            return ""
+            
+    details = []
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            search_key = metal_name.upper()
+            for page in pdf.pages:
+                text = page.extract_text()
+                if not text or search_key not in text: continue
+                
+                lines = text.split('\n')
+                for line in lines:
+                    if any(mm in line.upper() for mm in MARKET_MAKERS):
+                        clean_line = re.sub(r'\s+', ' ', line).strip()
+                        details.append(f"🚚 {clean_line}")
+    except: pass
+    return "\n".join(list(set(details))[:15])
 
-    # 1. 提取 PDF 文本
-    print("📄 正在从 PDF 提取文本...")
-    all_text = ""
-    with pdfplumber.open(pdf_path) as pdf:
-        # 2026 年报表通常在前 10 页涵盖所有金属
-        all_text = "\n".join([p.extract_text() for p in pdf.pages[:10] if p.extract_text()])
+def generate_activity_note(metal, change_val, delivery_txt):
+    """根据数据生成逻辑分析"""
+    note = "⚖️ Neutral"
+    if change_val < 0: note = "📉 Drawdown (去库)"
+    elif change_val > 0: note = "📦 Inflow (累库)"
+    
+    if "JPMORGAN" in delivery_txt:
+        if "Stop" in delivery_txt or "接货" in delivery_txt:
+            note += " | JPM 强力接货"
+    return note
 
-    # 2. 调用 AI 进行事实提取
-    print("🤖 正在调用 Gemini 分析交割数据...")
-    extraction = call_gemini_extraction_rest(all_text)
-    if not extraction:
-        return
-
-    # 3. 同步至 Notion
+def run_analysis():
     date_str = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    print(f"📅 准备同步日期: {date_str}")
-
-    for metal, conclusion in extraction.items():
-        try:
-            # 查询 Notion 条目
-            query_url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-            query_payload = {
-                "filter": {
-                    "and": [
-                        {"property": "Date", "date": {"equals": date_str}},
-                        {"property": "Metal Type", "select": {"equals": metal}}
-                    ]
+    
+    for metal, pid in OI_CONFIG.items():
+        print(f"Analyzing {metal}...")
+        oi_val = get_cme_oi(pid, date_str)
+        delivery_detail = parse_delivery_report(metal, date_str) # 传入日期以便下载
+        
+        query_res = requests.post(f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", headers=HEADERS, 
+                                 json={"filter": {"and": [{"property": "Date", "date": {"equals": date_str}},
+                                                        {"property": "Metal Type", "select": {"equals": metal}}]}}).json()
+        
+        if query_res.get("results"):
+            page = query_res["results"][0]
+            pid_notion = page["id"]
+            net_change = page["properties"].get("Net Change", {}).get("number") or 0
+            
+            activity_note = generate_activity_note(metal, net_change, delivery_detail)
+            
+            update_data = {
+                "properties": {
+                    "OI (Open Interest)": {"number": oi_val},
+                    "JPM/Asahi etc Stock change": {"rich_text": [{"text": {"content": delivery_detail[:2000]}}]},
+                    "Activity Note": {"rich_text": [{"text": {"content": activity_note}}]}
                 }
             }
-            res = requests.post(query_url, headers=HEADERS, json=query_payload).json()
-
-            if res.get("results"):
-                page_id = res["results"][0]["id"]
-                # 更新做市商异动字段
-                requests.patch(f"https://api.notion.com/v1/pages/{page_id}", headers=HEADERS, json={
-                    "properties": {
-                        "JPM/Asahi etc Stock change": {"rich_text": [{"text": {"content": conclusion}}]}
-                    }
-                })
-                print(f"✅ {metal} 异动填入: {conclusion}")
-            else:
-                print(f"⚠️ {metal} 在 Notion 中未找到记录")
-        except Exception as e:
-            print(f"❌ {metal} 同步失败: {e}")
+            requests.patch(f"https://api.notion.com/v1/pages/{pid_notion}", headers=HEADERS, json=update_data)
+            print(f"✅ {metal} Analysis Updated.")
 
 if __name__ == "__main__":
-    run_update()
+    run_analysis()
