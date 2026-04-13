@@ -2,7 +2,7 @@ import requests
 import os
 import datetime
 import time
-import sys  # 必须引入 sys 模块来控制退出码
+import sys  
 from datetime import timedelta
 from github import Github
 
@@ -11,7 +11,9 @@ from github import Github
 # ==========================================
 GITHUB_TOKEN = os.environ.get("GH_PERSONAL_TOKEN")
 GITHUB_REPO = "Curarpikt0000/cme-data-archive"
-SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "0434276aa91c62e0340dcd30819f3fbf") # 记得替换你的 Key
+
+# ✅ 关键修复：优先读取 GitHub Secrets 注入的环境变量，如果没读到，则使用你的实际 Key 兜底
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "0434276aa91c62e0340dcd30819f3fbf")
 
 DISPLAY_DATE = (datetime.datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 GITHUB_PATH_PREFIX = f"data/{DISPLAY_DATE}/"
@@ -44,7 +46,7 @@ def upload_to_github(filename, content_bytes):
         return False
 
 def download_with_scraperapi(filename):
-    """通过 ScraperAPI 下载文件"""
+    """通过 ScraperAPI 下载文件（带自动重试机制）"""
     target_url = f"{BASE_URL}{filename}"
     proxy_url = "http://api.scraperapi.com"
     params = {
@@ -53,25 +55,38 @@ def download_with_scraperapi(filename):
         'render': 'false', 
     }
     
-    try:
-        print(f"正在下载: {filename}...")
-        response = requests.get(proxy_url, params=params, timeout=60)
-        
-        if response.status_code == 200:
-            # 下载成功后立即尝试上传
-            if upload_to_github(filename, response.content):
-                return True
+    # ✅ 进阶优化：增加 3 次重试机制，防止 ScraperAPI 节点偶尔抽风
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            print(f"正在下载: {filename} (尝试 {attempt + 1}/{max_retries})...")
+            response = requests.get(proxy_url, params=params, timeout=60)
+            
+            if response.status_code == 200:
+                # 下载成功后立即尝试上传
+                if upload_to_github(filename, response.content):
+                    return True
+                return False
+            else:
+                print(f"⚠️ 下载失败: {filename} (状态码: {response.status_code})")
+                if attempt < max_retries - 1:
+                    time.sleep(3) # 失败后等 3 秒再试
+                    continue
+                return False
+        except Exception as e:
+            print(f"⚠️ 请求异常 ({filename}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(3)
+                continue
             return False
-        else:
-            print(f"❌ 下载失败: {filename} (状态码: {response.status_code})")
-            return False
-    except Exception as e:
-        print(f"❌ 请求异常 ({filename}): {e}")
-        return False
 
 if __name__ == "__main__":
     print(f"🚀 任务启动日期: {DISPLAY_DATE}")
     
+    if SCRAPER_API_KEY == "你的_SCRAPERAPI_KEY" or not SCRAPER_API_KEY:
+        print("❌ 致命错误: 未检测到有效的 SCRAPER_API_KEY！")
+        sys.exit(1)
+        
     total_files = len(METALS_FILES)
     failed_files = []
 
@@ -79,7 +94,7 @@ if __name__ == "__main__":
         # 如果下载或上传任何一步失败，则计入失败名单
         if not download_with_scraperapi(fname):
             failed_files.append(fname)
-        time.sleep(1) 
+        time.sleep(2) # 增加一点文件间的间隔，对代理更友好
         
     print(f"\n--- 任务总结 ---")
     print(f"成功: {total_files - len(failed_files)} / 失败: {len(failed_files)}")
